@@ -5,8 +5,14 @@ build/
 dist/
 wheels/
 raw/
-*.log
 *.egg-info
 
 # Virtual environments
-.venv
+.venv/
+raw/
+Collection/raw/
+*.log
+.env
+*.ipynb
+reports/
+Chart/*.png

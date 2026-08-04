@@ -14,6 +14,8 @@ import json
 import glob
 import pandas as pd
 import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 KEY = ["PlateNumb", "RouteUID", "Direction", "GPSTime"]
 
@@ -42,34 +44,81 @@ def load_day(city, date):
     snap = pd.DataFrame(snapshots)
     return df, snap
 
+def health_check_log(city, date, warningList = []):
+    warningString = f" {len(warningList)}項異常" if len(warningList) > 0 else ""
+    line = f"[{date} {city}{warningString}]"
+    # 
+    # TBD: 異常項目列表
+    # 
+    print(line, flush=True)
+    with open("daily_report.txt", "a", encoding="utf-8") as f:
+        f.write(line + "\n")
 
-def health_check(df, snap):
+def metric_log(msg):
+    line = msg
+    print(line, flush=True)
+    with open("metrics.jsonl", "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+def health_check(df, snap, city, date):
+    metrics = {}
+    metrics["schema_version"] = 1
+    metrics["date"] = date
+    metrics["city"] = city
+    
     print("\n" + "=" * 50)
     print("【基本數量】")
+    
+
+    metrics["raw_records"] = len(df)
     print(f"原始筆數        : {len(df):,}")
+
     dedup = df.drop_duplicates(subset=KEY)
+    metrics["dedup_records"] = len(dedup)
     print(f"去重後筆數      : {len(dedup):,}")
+
+    metrics["deduplication_ratio"] = len(dedup) / len(df)
     print(f"去重比例        : {len(dedup) / len(df):.3f}  (預期接近 0.5)")
+
+    metrics["distinct_vehicles"] = df['PlateNumb'].nunique()
     print(f"不重複車輛數    : {df['PlateNumb'].nunique():,}")
+
+    metrics["route_uid"] = df['RouteUID'].nunique()
     print(f"不重複路線數    : {df['RouteUID'].nunique():,}")
     
     print("\n【空值檢查】")
     nulls = df.isna().sum()
     nulls = nulls[nulls > 0]
+    metrics["null_counts"] = nulls.to_dict()
+    metrics["null_total"] = int(df.isna().sum().sum())   # 兩個 sum
     print(nulls if len(nulls) else "  沒有空值")
 
     print("\n【狀態碼分布】")
     for col in ["DutyStatus", "BusStatus", "Direction"]:
         if col in df.columns:
             print(f"  {col}: {df[col].value_counts().to_dict()}")
+    metrics["duty_status_2_count"] = int((df["DutyStatus"] == 2).sum())
+    metrics["bus_status_99_count"] = int((df["BusStatus"] == 99).sum())
+    metrics["bus_status_other_count"] = int((~df["BusStatus"].isin([0, 99])).sum())
+    metrics["bus_status_abnormal"] = int(df["BusStatus"].isin([1,2,4,98,101]).sum())   # 要排除的
+    metrics["bus_status_traffic"] = int(df["BusStatus"].isin([3,100]).sum())           # 有價值的
+    metrics["bus_status_2_vehicles"] = int(df[df["BusStatus"]==2]["PlateNumb"].nunique())
 
+    # print(f"value counts: {df[~df["BusStatus"].isin([0, 99])]["BusStatus"].value_counts()}")
     print("\n【時間欄位】")
     gps = pd.to_datetime(df["GPSTime"])
     upd = pd.to_datetime(df["UpdateTime"])
+    metrics["gps_min"] = str(gps.min())
+    metrics["gps_max"] = str(gps.max())
     print(f"  GPSTime 範圍  : {gps.min()}  ~  {gps.max()}")
+    
     delay = (upd - gps).dt.total_seconds()
+    metrics["delay_median_sec"] = float(delay.median())
+    metrics["delay_p95_sec"] = float(delay.quantile(0.95))
+    metrics["delay_max_sec"] = float(delay.max())
     print(f"  端到端延遲(秒): 中位數 {delay.median():.1f} / P95 {delay.quantile(0.95):.1f} / 最大 {delay.max():.1f}")
 
+    metrics["snapshot_count"] = len(snap)
     print("\n【快照筆數】")
     print(f"  最少 {snap['count'].min()} / 中位數 {snap['count'].median():.0f} / 最多 {snap['count'].max()}")
     empty = (snap["count"] == 0).sum()
@@ -83,11 +132,15 @@ def health_check(df, snap):
     bad = df[(lat < 24) | (lat > 26) | (lon < 120) | (lon > 123)]
     print(f"  離群座標筆數  : {len(bad):,}  ({len(bad)/len(df)*100:.3f}%)")
     print(f"  涉及車輛數    : {bad['PlateNumb'].nunique()}")
+    metrics["bad_coordinates"] = {str(k): int(v) for k, v in bad['PlateNumb'].value_counts().head(5).items()}
     if len(bad):
+        metrics["bad_count"] = len(bad)
         print(f"  最多的幾台    : {bad['PlateNumb'].value_counts().head(5).to_dict()}")
 
     print("=" * 50 + "\n")
 
+    health_check_log(city, date)
+    metric_log(json.dumps(metrics))
     return dedup
 
 
@@ -118,7 +171,21 @@ def plot(dedup, snap, city, date):
 
 
 if __name__ == "__main__":
-    city, date = sys.argv[1], sys.argv[2]
-    df, snap = load_day(city, date)
-    dedup = health_check(df, snap)
-    plot(dedup, snap, city, date)
+    today = datetime.now(ZoneInfo("Asia/Taipei"))
+    # 
+    # Default city: Taipei
+    # Default date: yesterday
+    # 
+    cities = ["Taipei", "NewTaipei"]
+    date = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    if len(sys.argv) > 2:
+        cities = [sys.argv[1]]
+        dates = [sys.argv[2]]
+    elif len(sys.argv) > 1:
+        cities = [sys.argv[1]]
+
+    for i in range(len(cities)):
+        df, snap = load_day(cities[i], date)
+        dedup = health_check(df, snap, cities[i], date)
+        plot(dedup, snap, cities[i], date)
