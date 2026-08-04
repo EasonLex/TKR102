@@ -22,7 +22,7 @@ KEY = ["PlateNumb", "RouteUID", "Direction", "GPSTime"]
 
 def load_day(city, date):
     """把一天的所有 gz 檔讀成一個 DataFrame，並記錄每個快照的筆數。"""
-    files = sorted(glob.glob(f"../Collection/raw/{city}/{date}/*.json.gz"))
+    files = sorted(glob.glob(f"../raw/{city}/{date}/*.json.gz"))
     print(f"找到 {len(files)} 個檔案")
 
     rows, snapshots = [], []
