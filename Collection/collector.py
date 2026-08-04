@@ -4,7 +4,11 @@ import json
 import gzip
 import requests
 from datetime import datetime, timezone, timedelta
-
+import shutil
+free_gb = shutil.disk_usage(".").free / 1e9
+if free_gb < 5:
+    log(f"⚠️ DISK LOW: {free_gb:.1f} GB")
+    
 # Settings
 CLIENT_ID = os.environ["TDX_CLIENT_ID"]
 CLIENT_SECRET = os.environ["TDX_CLIENT_SECRET"]
