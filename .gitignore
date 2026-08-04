@@ -16,3 +16,8 @@ Collection/raw/
 *.ipynb
 reports/
 Chart/*.png
+
+.DS_Store
+Chart/*.png
+Chart/daily_report.txt
+Chart/metrics.jsonl
