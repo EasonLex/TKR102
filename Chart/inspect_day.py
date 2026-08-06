@@ -16,13 +16,16 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from pathlib import Path
 
 KEY = ["PlateNumb", "RouteUID", "Direction", "GPSTime"]
 
 
 def load_day(city, date):
     """把一天的所有 gz 檔讀成一個 DataFrame，並記錄每個快照的筆數。"""
-    files = sorted(glob.glob(f"../raw/{city}/{date}/*.json.gz"))
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+    folder = PROJECT_ROOT / "raw" / city / date
+    files = sorted(folder.glob("*.json.gz"))
     print(f"找到 {len(files)} 個檔案")
 
     rows, snapshots = [], []
@@ -35,7 +38,7 @@ def load_day(city, date):
             continue
 
         snapshots.append({
-            "file_time": path.split("/")[-1].replace(".json.gz", ""),
+            "file_time": path.name.replace(".json.gz", ""),
             "count": len(data),
         })
         rows.extend(data)
@@ -137,6 +140,9 @@ def health_check(df, snap, city, date):
         metrics["bad_count"] = len(bad)
         print(f"  最多的幾台    : {bad['PlateNumb'].value_counts().head(5).to_dict()}")
 
+    bad_speed = df[df["Speed"] > 100]
+    print(bad_speed["PlateNumb"].value_counts().head())
+
     print("=" * 50 + "\n")
 
     health_check_log(city, date)
@@ -177,7 +183,7 @@ if __name__ == "__main__":
     # Default date: yesterday
     # 
     cities = ["Taipei", "NewTaipei"]
-    date = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+    date = '2026-08-03' # (today - timedelta(days=1)).strftime("%Y-%m-%d")
 
     if len(sys.argv) > 2:
         cities = [sys.argv[1]]
