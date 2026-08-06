@@ -9,6 +9,7 @@ raw/
 
 # Virtual environments
 .venv/
+.env
 raw/
 Collection/raw/
 *.log

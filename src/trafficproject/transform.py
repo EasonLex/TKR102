@@ -47,6 +47,7 @@ SCHEMA = pa.schema([
     ("gps_time",        pa.timestamp("s", tz="UTC")),
     ("src_update_time", pa.timestamp("s", tz="UTC")),
     ("update_time",     pa.timestamp("s", tz="UTC")),
+    ("snapshot_time",   pa.timestamp("s", tz="UTC")),
 ])
 
 # ---------- 原始欄位對照 ----------
@@ -81,19 +82,22 @@ TIME_COLS = {
     "GPSTime":       "gps_time",
     "SrcUpdateTime": "src_update_time",
     "UpdateTime":    "update_time",
+    "SnapshotTime":  "snapshot_time",
 }
+
+INTERNAL_COLS = {"SnapshotTime"}
 
 # 預期上游會有的欄位，用於漂移偵測
 EXPECTED_RAW_COLS = (
     set(FLAT_RENAME) | set(NESTED_RENAME) | set(TIME_COLS)
-)
+) - INTERNAL_COLS
 
 
 def check_schema_drift(df, strict=False):
     """比對上游實際欄位與預期欄位，回傳差異描述（無差異則回傳 None）。"""
     actual = set(df.columns)
     missing = EXPECTED_RAW_COLS - actual
-    extra = actual - EXPECTED_RAW_COLS
+    extra = actual - EXPECTED_RAW_COLS - INTERNAL_COLS
 
     if not missing and not extra:
         return None
@@ -155,6 +159,7 @@ def transform(df, city, data_date, strict=False):
 
     # 4. 補上分區欄位
     df["city"] = city
+    df["data_date"] = data_date
     df["data_date"] = data_date
 
     # 5. 只保留 SCHEMA 定義的欄位，並固定順序

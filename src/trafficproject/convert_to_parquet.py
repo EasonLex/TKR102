@@ -1,4 +1,5 @@
 import gc
+import sys
 import pandas as pd
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -6,9 +7,20 @@ import glob
 import pyarrow as pa
 import pyarrow.parquet as pq
 from pathlib import Path
-from transform import to_table
+import shutil
+
+from trafficproject.transform import to_table
+from trafficproject.paths import RAW_DIR, PARQUET_DIR
 
 batch_size = 100
+
+def parse_snapshot_time(filename, date):
+    """104252.json.gz + 2026-08-03 → Timestamp(台北)"""
+    hhmmss = filename.replace(".json.gz", "")
+    return pd.Timestamp(
+        f"{date} {hhmmss[:2]}:{hhmmss[2:4]}:{hhmmss[4:6]}",
+        tz="Asia/Taipei",
+    )
 
 def temp_save(temp_dir, source_dir, city, date):
     temp_parquet_files = []
@@ -37,6 +49,7 @@ def temp_save(temp_dir, source_dir, city, date):
                         "SubRouteUID": str,
                     },
                 )
+                df_single["SnapshotTime"] = parse_snapshot_time(filePath.name, date)
                 df_list.append(df_single)
             except Exception as e:
                 print(f"  讀取失敗 {filePath}: {e}")
@@ -58,6 +71,7 @@ def temp_save(temp_dir, source_dir, city, date):
         finally:
             del df_list, combined_df
             gc.collect()
+
     return temp_parquet_files
 
 def merge_temp_parquet(temp_parquet_files, output_dir, date):
@@ -85,10 +99,9 @@ def merge_temp_parquet(temp_parquet_files, output_dir, date):
 
 def convert_to_parquet(city, date):
     # """把一天的所有 gz 檔讀成一個 DataFrame，並存成 parquet。"""
-    PROJECT_ROOT = Path(__file__).resolve().parent.parent
-    source_dir = PROJECT_ROOT / "raw" / city / date #f"../raw/{city}/{date}"
-    output_dir = PROJECT_ROOT / "output" / "parquet" / city # Path(f"../output/parquet/{city}")
-    temp_dir = PROJECT_ROOT / "output" / "parquet" / city / date / "temp" # Path(f"../output/parquet/{city}/{date}/temp")
+    source_dir = RAW_DIR / city / date
+    output_dir = PARQUET_DIR / city
+    temp_dir = PARQUET_DIR / city / "temp"
 
     output_dir.mkdir(parents=True, exist_ok=True)
     temp_dir.mkdir(parents=True, exist_ok=True)
@@ -99,6 +112,12 @@ def convert_to_parquet(city, date):
     # 合併所有暫存parquet
     merge_temp_parquet(temp_parquet_files, output_dir, date)
 
+    # 移除暫存檔
+    if temp_dir.exists():
+        # 移除整個目錄，無論該目錄是否有內容
+        shutil.rmtree(temp_dir)
+        print(f"{temp_dir.name} 已刪除")
+
 
 if __name__ == "__main__":
     today = datetime.now(ZoneInfo("Asia/Taipei"))
@@ -107,14 +126,13 @@ if __name__ == "__main__":
     # Default date: yesterday
     # 
     cities = ["Taipei", "NewTaipei"]
-    date = '2026-08-03' #(today - timedelta(days=1)).strftime("%Y-%m-%d")
+    date = (today - timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # if len(sys.argv) > 2:
-    #     cities = [sys.argv[1]]
-    #     dates = [sys.argv[2]]
-    # elif len(sys.argv) > 1:
-    #     cities = [sys.argv[1]]
-
+    if len(sys.argv) > 1:
+        cities = [sys.argv[1]]
+        date = sys.argv[2]
+    elif len(sys.argv) > 0:
+        cities = [sys.argv[1]]
+    print(date)
     for i in range(len(cities)):
         convert_to_parquet(cities[i], date)
-    # print(pq.ParquetFile("../output/parquet/Taipei/2026-08-03.parquet").schema_arrow)
