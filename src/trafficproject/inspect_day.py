@@ -193,22 +193,22 @@ def plot(dedup, snap, city, date, out_dir="."):
     print(f"圖已存成 {out}")
 
 
-if __name__ == "__main__":
-    today = datetime.now(ZoneInfo("Asia/Taipei"))
-    # 
-    # Default city: Taipei
-    # Default date: yesterday
-    # 
-    cities = ["Taipei", "NewTaipei"]
-    date = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+# if __name__ == "__main__":
+#     today = datetime.now(ZoneInfo("Asia/Taipei"))
+#     # 
+#     # Default city: Taipei
+#     # Default date: yesterday
+#     # 
+#     cities = ["Taipei", "NewTaipei"]
+#     date = (today - timedelta(days=1)).strftime("%Y-%m-%d")
 
-    if len(sys.argv) > 2:
-        cities = [sys.argv[1]]
-        date = sys.argv[2]
-    elif len(sys.argv) > 1:
-        cities = [sys.argv[1]]
+#     if len(sys.argv) > 2:
+#         cities = [sys.argv[1]]
+#         date = sys.argv[2]
+#     elif len(sys.argv) > 1:
+#         cities = [sys.argv[1]]
 
-    for i in range(len(cities)):
-        df = load_day(cities[i], date)
-        dedup, snap = health_check(df, cities[i], date)
-        plot(dedup, snap, cities[i], date)
+#     for i in range(len(cities)):
+#         df = load_day(cities[i], date)
+#         dedup, snap = health_check(df, cities[i], date)
+#         plot(dedup, snap, cities[i], date)

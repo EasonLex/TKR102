@@ -15,6 +15,9 @@ from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 
 from trafficproject.paths import PROJECT_ROOT, RAW_DIR, LOG_DIR
+from trafficproject.logging_util import make_logger
+
+log = make_logger("collector")
 
 # ---------- 設定 ----------
 load_dotenv(PROJECT_ROOT / ".env")
@@ -38,16 +41,17 @@ _token = None
 _token_expire_at = 0
 
 
-def log(msg):
-    line = f"[{datetime.now(TPE).isoformat(timespec='seconds')}] {msg}"
-    print(line, flush=True)
-    with open(LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(line + "\n")
+# def log(msg):
+#     line = f"[{datetime.now(TPE).isoformat(timespec='seconds')}] {msg}"
+#     print(line, flush=True)
+#     with open(LOG_PATH, "a", encoding="utf-8") as f:
+#         f.write(line + "\n")
 
 
 def get_token():
     """只在快過期時才重新換 token，保留 60 秒緩衝避開邊界。"""
     global _token, _token_expire_at
+    print(f"this is the token: {_token}")
     if _token and time.time() < _token_expire_at - 60:
         return _token
 
