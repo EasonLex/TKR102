@@ -26,6 +26,7 @@ CLIENT_SECRET = os.environ["TDX_CLIENT_SECRET"]
 
 CITIES = ["Taipei", "NewTaipei"]
 INTERVAL = 5
+NIGHT_INTERVAL = 15
 
 DISK_WARN_GB = 10          # 低於此值告警
 DISK_CHECK_EVERY = 360     # 每幾輪檢查一次（5 秒一輪 → 約 30 分鐘）
@@ -47,11 +48,13 @@ _token_expire_at = 0
 #     with open(LOG_PATH, "a", encoding="utf-8") as f:
 #         f.write(line + "\n")
 
+def current_interval():
+    hour = datetime.now(TPE).hour
+    return NIGHT_INTERVAL if (hour >= 22 or hour < 6) else INTERVAL
 
 def get_token():
     """只在快過期時才重新換 token，保留 60 秒緩衝避開邊界。"""
     global _token, _token_expire_at
-    print(f"this is the token: {_token}")
     if _token and time.time() < _token_expire_at - 60:
         return _token
 
@@ -106,10 +109,13 @@ def check_disk():
 
 
 def main():
-    log(f"start collecting: {CITIES}, every {INTERVAL}s -> {RAW_DIR}")
+    interval = current_interval()
+    
+    log(f"start collecting: {CITIES}, every {interval}s -> {RAW_DIR}")
     log(f"disk free: {shutil.disk_usage(RAW_DIR).free / 1e9:.1f} GB")
 
     i = 0
+
     while True:
         city = CITIES[i % len(CITIES)]
         cycle_start = time.time()
@@ -132,7 +138,7 @@ def main():
 
         i += 1
         elapsed = time.time() - cycle_start
-        time.sleep(max(0, INTERVAL - elapsed))
+        time.sleep(max(0, interval - elapsed))
 
 
 if __name__ == "__main__":
