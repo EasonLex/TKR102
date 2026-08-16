@@ -110,7 +110,7 @@ def check_disk():
 
 def main():
     
-    log(f"start collecting: {CITIES}, every {interval}s -> {RAW_DIR}")
+    log(f"start collecting: {CITIES}, day={INTERVAL}s night={NIGHT_INTERVAL}s")
     log(f"disk free: {shutil.disk_usage(RAW_DIR).free / 1e9:.1f} GB")
 
     i = 0
