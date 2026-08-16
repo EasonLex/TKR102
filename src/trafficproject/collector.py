@@ -109,7 +109,6 @@ def check_disk():
 
 
 def main():
-    interval = current_interval()
     
     log(f"start collecting: {CITIES}, every {interval}s -> {RAW_DIR}")
     log(f"disk free: {shutil.disk_usage(RAW_DIR).free / 1e9:.1f} GB")
@@ -117,6 +116,7 @@ def main():
     i = 0
 
     while True:
+        interval = current_interval()
         city = CITIES[i % len(CITIES)]
         cycle_start = time.time()
 
