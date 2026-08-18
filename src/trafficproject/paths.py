@@ -1,7 +1,9 @@
 from pathlib import Path
+from dotenv import load_dotenv
 
 # src/trafficproject/paths.py → 上溯三層才是專案根目錄
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env")
 
 RAW_DIR     = PROJECT_ROOT / "raw"
 OUTPUT_DIR  = PROJECT_ROOT / "output"
