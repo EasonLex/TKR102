@@ -33,7 +33,7 @@ import numpy as np
 import pandas as pd
 from pymongo import MongoClient
 
-from trafficproject.paths import PARQUET_DIR, OUTPUT_DIR
+from trafficproject.paths import PARQUET_DIR, EVENT_DIR
 from trafficproject.logging_util import make_logger
 
 log = make_logger("extract_events")
@@ -201,7 +201,7 @@ def extract_day(city, date, all_stops=None):
                       + "_" + date + "_" + out["trip"].astype(str))
 
     out = out[out["arrival_time"].dt.date.astype(str) == out["data_date"]]
-    out_dir = OUTPUT_DIR / "events" / city
+    out_dir = EVENT_DIR / city
     out_dir.mkdir(parents=True, exist_ok=True)
     out.to_parquet(out_dir / f"{date}.parquet", compression="zstd", index=False)
 

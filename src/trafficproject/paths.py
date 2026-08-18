@@ -8,6 +8,9 @@ OUTPUT_DIR  = PROJECT_ROOT / "output"
 PARQUET_DIR = OUTPUT_DIR / "parquet"
 REPORT_DIR  = OUTPUT_DIR / "reports"
 LOG_DIR     = OUTPUT_DIR / "logs"
+EVENT_DIR   = OUTPUT_DIR / "events"
+TRANSFER_DIR= OUTPUT_DIR / "transfers"
+MART_DIR    = OUTPUT_DIR / "marts"
 
 for d in (RAW_DIR, PARQUET_DIR, REPORT_DIR, LOG_DIR):
     d.mkdir(parents=True, exist_ok=True)
