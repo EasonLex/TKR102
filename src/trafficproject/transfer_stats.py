@@ -54,7 +54,7 @@ def pair_transfers(events):
     return pd.DataFrame(rows)
 
 
-def aggregate_transfers(pairs, station_id, max_wait_sec=1200, bin_width_sec=30):
+def aggregate_transfers(city, date, pairs, station_id, max_wait_sec=1200, bin_width_sec=30):
     """
     把轉乘明細聚合成統計表。
 
@@ -125,7 +125,7 @@ def build_transfers(city, date):
         pair_result = pair_transfers(group)
         if station_id not in valid or pair_result.empty:
             continue
-        agg = aggregate_transfers(pair_result, station_id)
+        agg = aggregate_transfers(city, date, pair_result, station_id)
         results.append(agg)
         if i % 500 == 0:
             log(f"  進度 {i}/{n_stations} ({time.time()-t0:.0f}s)")
