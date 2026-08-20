@@ -37,7 +37,6 @@ DEEP_NIGHT_INTERVAL = 150
 
 DISK_WARN_GB = 10          # 低於此值告警
 DISK_CHECK_EVERY_S = 1800          # 30 分鐘
-_last_disk_check = 0.0
 
 AUTH_URL = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token"
 API_BASE = "https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/City"
@@ -183,6 +182,7 @@ def main():
         f"night={NIGHT_INTERVAL}s deep_night={DEEP_NIGHT_INTERVAL}s")
 
     i = 0
+    last_disk_check = 0.0
 
     try:
         while not _stop_event.is_set():
@@ -190,9 +190,9 @@ def main():
             city = CITIES[i % len(CITIES)]
             cycle_start = time.time()
     
-            if time.time() - _last_disk_check > DISK_CHECK_EVERY_S:
+            if time.time() - last_disk_check > DISK_CHECK_EVERY_S:
                 check_disk()
-                _last_disk_check = time.time()
+                last_disk_check = time.time()
     
             try:
                 data, fetch_time = fetch(city)
