@@ -56,7 +56,7 @@ config = {
     'batch.size': 1048576,                    # 位元組，不是 batch.num.messages
     'linger.ms': 50,
     'error_cb': _error_cb,
-    'message.timeout.ms': 30000,     # 測試期間縮短，才不用等五分鐘
+    'message.timeout.ms': 300000,     # 測試期間縮短，才不用等五分鐘
 }
 producer = Producer(config)
 
