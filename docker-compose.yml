@@ -1,0 +1,84 @@
+# Kafka 4.x KRaft 單節點 — 本機與 GCE 共用同一份設定
+#
+# 兩組 listener 是本設定的核心：
+#   INTERNAL  容器之間（consumer 若也跑在同一台）
+#   EXTERNAL  外部 client（走 Tailscale IP）
+# 只要改 .env 裡的 KAFKA_EXTERNAL_HOST，同一份 compose 就能在
+# Mac mini 與 GCE 之間搬移，不必改任何一行。
+
+services:
+  kafka:
+    image: apache/kafka:4.0.0
+    container_name: kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"    # INTERNAL（本機測試用；上雲後可只留 9094）
+      - "9094:9094"    # EXTERNAL（Tailscale）
+    environment:
+      # ---- KRaft：不需要 ZooKeeper ----
+      CLUSTER_ID: ${CLUSTER_ID}
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      # ---- Listener ----
+      KAFKA_LISTENERS: INTERNAL://:9092,EXTERNAL://:9094,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://${KAFKA_INTERNAL_HOST:-localhost}:9092,EXTERNAL://${KAFKA_EXTERNAL_HOST}:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+
+      # ---- 單節點：所有複本數都必須是 1 ----
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+
+      # ---- Retention：時間與容量雙保險 ----
+      # retention.bytes 是「每個 partition」，不是每個 topic。
+      # 12 partitions × 2.5 GB = 30 GB 上限，在 50 GB 磁碟上留了餘裕。
+      KAFKA_LOG_RETENTION_HOURS: 168              # 7 天
+      KAFKA_LOG_RETENTION_BYTES: 2500000000       # 2.5 GB / partition
+      KAFKA_LOG_SEGMENT_BYTES: 268435456          # 256 MB
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+
+      # ---- 壓縮：保留 producer 端的壓縮，不在 broker 重壓 ----
+      KAFKA_COMPRESSION_TYPE: producer
+
+      # ---- Topic 預設 ----
+      KAFKA_NUM_PARTITIONS: 12
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"    # 打錯字不該產生新 topic
+
+      # ---- 記憶體：e2-medium 4 GB，堆留 1 GB，其餘給 page cache ----
+      KAFKA_HEAP_OPTS: "-Xmx1g -Xms1g"
+
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - ${KAFKA_DATA_DIR:-./data}:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "3" }
+
+  # 選用：網頁介面，看 lag / topic 大小很方便，報告 demo 也用得上
+  kafka-ui:
+    image: kafbat/kafka-ui:latest
+    container_name: kafka-ui
+    restart: unless-stopped
+    depends_on:
+      kafka: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:8080:8080"   # 只綁 localhost，靠 SSH port-forward 或 Tailscale 存取
+    environment:
+      KAFKA_CLUSTERS_0_NAME: bus
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "true"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "2" }

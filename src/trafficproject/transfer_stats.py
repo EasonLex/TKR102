@@ -54,7 +54,7 @@ def pair_transfers(events):
     return pd.DataFrame(rows)
 
 
-def aggregate_transfers(city, date, pairs, station_id, max_wait_sec=1200, bin_width_sec=30):
+def aggregate_transfers(city, date, pairs, station_id, max_wait_sec=3600, bin_width_sec=30):
     """
     把轉乘明細聚合成統計表。
 
