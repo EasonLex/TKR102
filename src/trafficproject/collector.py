@@ -46,12 +46,17 @@ LOG_PATH = LOG_DIR / "collector.log"
 TOPIC = "bus.position.raw"
 # TOPIC_B = "bus.position.raw.default"
 
+def _error_cb(err):
+    log(f"Kafka error: {err}")
+
 config = {
     'bootstrap.servers': KAFKA_BOOTSTRAP,     # 從 .env 讀
     'client.id': 'collector-a',
     'compression.type': 'zstd',               # 跟 topic 設定一致，避免 broker 重壓
     'batch.size': 1048576,                    # 位元組，不是 batch.num.messages
     'linger.ms': 50,
+    'error_cb': _error_cb,
+    'message.timeout.ms': 30000,     # 測試期間縮短，才不用等五分鐘
 }
 producer = Producer(config)
 
@@ -166,6 +171,7 @@ def main():
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
 
+    log(f"kafka bootstrap = {KAFKA_BOOTSTRAP}")
     log(f"start collecting: {CITIES}, day={INTERVAL}s night={NIGHT_INTERVAL}s")
     log(f"disk free: {shutil.disk_usage(RAW_DIR).free / 1e9:.1f} GB")
 
