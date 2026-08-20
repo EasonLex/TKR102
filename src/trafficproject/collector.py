@@ -33,9 +33,11 @@ KAFKA_BOOTSTRAP = os.environ["KAFKA_BOOTSTRAP"]
 CITIES = ["Taipei", "NewTaipei"]
 INTERVAL = 5
 NIGHT_INTERVAL = 15
+DEEP_NIGHT_INTERVAL = 150
 
 DISK_WARN_GB = 10          # 低於此值告警
-DISK_CHECK_EVERY = 360     # 每幾輪檢查一次（5 秒一輪 → 約 30 分鐘）
+DISK_CHECK_EVERY_S = 1800          # 30 分鐘
+_last_disk_check = 0.0
 
 AUTH_URL = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token"
 API_BASE = "https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/City"
@@ -56,7 +58,7 @@ config = {
     'batch.size': 1048576,                    # 位元組，不是 batch.num.messages
     'linger.ms': 50,
     'error_cb': _error_cb,
-    'message.timeout.ms': 300000,     # 測試期間縮短，才不用等五分鐘
+    'message.timeout.ms': 300000, 
 }
 producer = Producer(config)
 
@@ -81,9 +83,14 @@ def _stop(signum, frame):
     _stop_event.set()
     log(f"收到訊號 {signum}，準備關閉")
 
-def current_interval():
+def current_mode():
+    """回傳 (模式名稱, 每輪間隔秒數)。"""
     hour = datetime.now(TPE).hour
-    return NIGHT_INTERVAL if (hour >= 22 or hour < 6) else INTERVAL
+    if 2 <= hour < 4:
+        return "deep_night", DEEP_NIGHT_INTERVAL
+    if hour >= 22 or hour < 6:
+        return "night", NIGHT_INTERVAL
+    return "day", INTERVAL
 
 def get_token():
     """只在快過期時才重新換 token，保留 60 秒緩衝避開邊界。"""
@@ -172,25 +179,26 @@ def main():
     signal.signal(signal.SIGINT, _stop)
 
     log(f"kafka bootstrap = {KAFKA_BOOTSTRAP}")
-    log(f"start collecting: {CITIES}, day={INTERVAL}s night={NIGHT_INTERVAL}s")
-    log(f"disk free: {shutil.disk_usage(RAW_DIR).free / 1e9:.1f} GB")
+    log(f"start collecting: {CITIES}, day={INTERVAL}s "
+        f"night={NIGHT_INTERVAL}s deep_night={DEEP_NIGHT_INTERVAL}s")
 
     i = 0
 
     try:
         while not _stop_event.is_set():
-            interval = current_interval()
+            mode, interval = current_mode()
             city = CITIES[i % len(CITIES)]
             cycle_start = time.time()
     
-            if i % DISK_CHECK_EVERY == 0:
+            if time.time() - _last_disk_check > DISK_CHECK_EVERY_S:
                 check_disk()
+                _last_disk_check = time.time()
     
             try:
                 data, fetch_time = fetch(city)
                 path, n = save(city, data)
                 send_producer(city, data, fetch_time)
-                log(f"{city}: {n} records -> {path.relative_to(RAW_DIR.parent)} "
+                log(f"[{mode}/{interval}s] {city}: {n} records -> {path.relative_to(RAW_DIR.parent)} "
                     f"| kafka ok={_delivered} fail={_failed}")
             except requests.HTTPError as e:
                 log(f"{city}: HTTP {e.response.status_code} {e.response.text[:200]}")
