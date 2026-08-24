@@ -44,7 +44,7 @@ KAFKA_BOOTSTRAP = os.environ["KAFKA_BOOTSTRAP"]
 GCS_BUCKET = os.environ["GCS_BUCKET"]
  
 TOPIC = "bus.position.raw"
-GROUP_ID = "archiver-dev"
+GROUP_ID = "archiver"
 PIPELINE_VERSION = "archiver-1.0.0"
  
 FLUSH_RECORDS = 200_000           # 筆數門檻
