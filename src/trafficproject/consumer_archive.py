@@ -47,7 +47,7 @@ TOPIC = "bus.position.raw"
 GROUP_ID = "archiver"
 PIPELINE_VERSION = "archiver-1.0.0"
  
-FLUSH_RECORDS = 200_000           # 筆數門檻
+FLUSH_RECORDS = 50_000           # 筆數門檻
 FLUSH_SECONDS = 600              # 時間門檻（低流量時段確保會落地）
 CONSUME_BATCH = 5_000            # 每次 consume() 最多取幾則
 CONSUME_TIMEOUT = 1.0            # 秒
