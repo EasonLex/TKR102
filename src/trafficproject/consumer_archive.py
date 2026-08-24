@@ -241,6 +241,7 @@ def main():
     log(f"flush 門檻：{FLUSH_RECORDS:,} 筆 或 {FLUSH_SECONDS}s")
  
     last_flush = time.time()
+    last_beat = time.time() 
  
     try:
         while not _stop_event.is_set():
@@ -275,6 +276,12 @@ def main():
                     # 緩衝持續成長會吃光記憶體，所以要看得到這個訊息。
                     log(f"⚠️ 保留 {len(buffer):,} 筆待重試")
                     time.sleep(10)
+                    
+            if time.time() - last_beat >= 60:
+                log(f"idle | buffer={len(buffer):,} "
+                    f"consumed={_stat['consumed']:,} "
+                    f"files={_stat['files']}")
+                last_beat = time.time()
     finally:
         log("關閉中，落地剩餘緩衝…")
         flush(consumer, buffer)
