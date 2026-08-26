@@ -1,5 +1,6 @@
 # ------------------------------------------------------------
 from datetime import datetime, timedelta
+import os
 import sys
 from zoneinfo import ZoneInfo
 import pandas as pd
@@ -17,6 +18,8 @@ TPE = "Asia/Taipei"
 
 TMP_DIR = Path("/tmp/compact")
 TMP_DIR.mkdir(parents=True, exist_ok=True)
+
+GCS_BUCKET = os.environ["GCS_BUCKET"]
 
 log = make_logger("compact")
 fs = gcsfs.GCSFileSystem()
@@ -80,11 +83,11 @@ def stage_generator(file_list, city, date):
 
 def upload(local_tmp, city, date): 
     name = f"silver/positions/city={city}/dt={date}/positions.parquet" 
-    fs.put(str(local_tmp), f"tkr102-traffic-data/{name}")
+    fs.put(str(local_tmp), f"{GCS_BUCKET}/{name}")
     return name
 
 def verify(file_name, expected_rows):
-    gcs_path = f"gs://tkr102-traffic-data/{file_name}"
+    gcs_path = f"gs://{GCS_BUCKET}/{file_name}"
     df = pd.read_parquet(gcs_path, columns=["kafka_partition", "kafka_offset"])
     assert len(df) == expected_rows, f"列數不符 {len(df)} != {expected_rows}"
     key = (df["kafka_partition"].to_numpy("int64") << 48) | df["kafka_offset"].to_numpy("int64")
@@ -95,8 +98,8 @@ def compact_action(city, date):
     if date >= today:
         raise ValueError(f"{date} 尚未結束，不可壓實")
 
-    target_glob = f"gs://tkr102-traffic-data/staging/positions/city={city}/dt={date}/*.parquet"
-    silver_key  = f"tkr102-traffic-data/silver/positions/city={city}/dt={date}/positions.parquet"
+    target_glob = f"gs://{GCS_BUCKET}/staging/positions/city={city}/dt={date}/*.parquet"
+    silver_key  = f"{GCS_BUCKET}/silver/positions/city={city}/dt={date}/positions.parquet"
 
     file_list = sorted(fs.glob(target_glob))
 
