@@ -1,0 +1,75 @@
+# =====================================================================
+# 應用服務（collector，之後加 archiver）
+#
+# 刻意跟 Kafka 的 compose 分開兩個檔案：
+#   ~/kafka/docker-compose.yml        基礎設施
+#   ~/TrafficProject/deploy/…yml      應用服務   ← 這一份
+#
+# 塞在同一個檔案比較省事，但重新部署 collector 時你不會想
+# 碰到 Kafka 的定義。基礎設施的變更頻率跟應用不同，
+# 混在一起等於把兩種節奏綁在同一個 down/up 上。
+#
+# 啟動：
+#     cd ~/TrafficProject
+#     docker build -t trafficproject:latest .
+#     docker compose -f deploy/docker-compose.yml up -d
+# =====================================================================
+
+services:
+  collector:
+    image: trafficproject:latest
+    # 讓 compose 自己建，避免「忘了重 build」而用到舊映像。
+    # context 是 ..，因為 Dockerfile 與 src/ 在專案根目錄。
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: collector
+    restart: unless-stopped
+
+    # ⚠️ compose 的相對路徑是相對於「compose 檔所在目錄」，不是你執行
+    #    指令的目錄。這個檔在 deploy/，所以 ../ 才是專案根目錄。
+    #    寫成 ./ 會變成 deploy/output/logs，log 生在一個沒人會去看的地方。
+    # .env 不進 git，單獨傳到機器上並 chmod 600
+    env_file:
+      - ../.env
+
+    environment:
+      # 同機、同網路，走 INTERNAL listener。
+      # Mac mini 版連的是 <Tailscale IP>:9094（EXTERNAL），
+      # 搬進 Kafka 的網路之後正確答案就翻過來了——
+      # 9092 / 9094 的對錯取決於你在網路的哪一側，不是號碼本身。
+      KAFKA_BOOTSTRAP: "kafka:9092"
+      # GCE 不寫 raw。這一行不存在就是關閉，
+      # 而 collector 啟動時會 log 出 "raw positions: OFF"。
+      # SAVE_RAW_POSITIONS: "1"
+
+    volumes:
+      # log 留在主機上，容器重建不會弄丟，也方便 tail
+      - ../output/logs:/app/output/logs
+
+    # 這個上限要容得下 producer 的退路緩衝：
+    # queue.buffering.max.messages = 600000，Kafka 掛 30 分鐘時
+    # 那 60 萬則全在記憶體裡，約 200–300 MB。
+    # 設太小的話，你買來的退路會變成 OOM。
+    mem_limit: 768m
+
+    # 只是讓 `docker ps` 能顯示 unhealthy——Docker 不會因為
+    # unhealthy 而重啟。真正的告警之後由 Airflow 的健康檢查 DAG 做。
+    # 但至少「停了卻沒人知道」變成「ps 一看就知道」。
+    healthcheck:
+      test: ["CMD-SHELL", "find /app/output/logs/collector.log -mmin -5 | grep -q ."]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    networks:
+      - kafka
+
+networks:
+  # Kafka 那份 compose 建立的網路。名稱 = 該 compose 的專案名 + _default，
+  # 專案名預設是目錄名，所以 ~/kafka/ 底下起的就是 kafka_default。
+  # 對不上的話用 `docker network ls` 確認實際名稱。
+  kafka:
+    external: true
+    name: kafka_default

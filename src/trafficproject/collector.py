@@ -44,7 +44,7 @@ API_BASE = "https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/Ci
 TPE = timezone(timedelta(hours=8))
 LOG_PATH = LOG_DIR / "collector.log"
 
-TOPIC = "bus.position.raw"
+TOPIC = os.getenv("KAFKA_TOPIC", "bus.position.raw")
 # TOPIC_B = "bus.position.raw.default"
 
 SAVE_RAW = os.getenv("SAVE_RAW_POSITIONS") == "1"
@@ -184,7 +184,7 @@ def main():
     log(f"start collecting: {CITIES}, day={CYCLE_INTERVAL}s "
         f"night={NIGHT_INTERVAL}s deep_night={DEEP_NIGHT_INTERVAL}s")
     log(f"raw positions: {'ON -> ' + str(RAW_DIR) if SAVE_RAW else 'OFF'}")
-    
+
     i = 0
     last_disk_check = 0.0
 

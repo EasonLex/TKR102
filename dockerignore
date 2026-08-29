@@ -1,0 +1,14 @@
+# 建置 context 只需要程式碼與依賴宣告。
+# 沒有這個檔的話，docker build 會把整個 raw/ 與 output/ 打包上傳——
+# 那是好幾 GB，而且裡面有資料。
+.venv/
+venv/
+__pycache__/
+*.pyc
+.git/
+.env
+raw/
+output/
+notebooks/
+*.log
+.DS_Store

@@ -43,7 +43,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 KAFKA_BOOTSTRAP = os.environ["KAFKA_BOOTSTRAP"]
 GCS_BUCKET = os.environ["GCS_BUCKET"]
  
-TOPIC = "bus.position.raw"
+TOPIC = os.getenv("KAFKA_TOPIC", "bus.position.raw")
 GROUP_ID = "archiver"
 PIPELINE_VERSION = "archiver-1.0.0"
  
