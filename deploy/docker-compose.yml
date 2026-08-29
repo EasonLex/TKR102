@@ -26,6 +26,7 @@ services:
     container_name: collector
     restart: unless-stopped
 
+    user: "1096042652:1096042652"
     # ⚠️ compose 的相對路徑是相對於「compose 檔所在目錄」，不是你執行
     #    指令的目錄。這個檔在 deploy/，所以 ../ 才是專案根目錄。
     #    寫成 ./ 會變成 deploy/output/logs，log 生在一個沒人會去看的地方。

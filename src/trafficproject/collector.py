@@ -181,6 +181,7 @@ def main():
     signal.signal(signal.SIGINT, _stop)
 
     log(f"kafka bootstrap = {KAFKA_BOOTSTRAP}")
+    log(f"topic = {TOPIC}")                          # ← 加這行
     log(f"start collecting: {CITIES}, day={CYCLE_INTERVAL}s "
         f"night={NIGHT_INTERVAL}s deep_night={DEEP_NIGHT_INTERVAL}s")
     log(f"raw positions: {'ON -> ' + str(RAW_DIR) if SAVE_RAW else 'OFF'}")
