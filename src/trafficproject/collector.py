@@ -31,7 +31,7 @@ CLIENT_SECRET = os.environ["TDX_CLIENT_SECRET"]
 KAFKA_BOOTSTRAP = os.environ["KAFKA_BOOTSTRAP"]
 
 CITIES = ["Taipei", "NewTaipei"]
-INTERVAL = 5
+CYCLE_INTERVAL = 5
 NIGHT_INTERVAL = 15
 DEEP_NIGHT_INTERVAL = 150
 
@@ -47,6 +47,8 @@ LOG_PATH = LOG_DIR / "collector.log"
 TOPIC = "bus.position.raw"
 # TOPIC_B = "bus.position.raw.default"
 
+SAVE_RAW = os.getenv("SAVE_RAW_POSITIONS") == "1"
+
 def _error_cb(err):
     log(f"Kafka error: {err}")
 
@@ -57,7 +59,8 @@ config = {
     'batch.size': 1048576,                    # 位元組，不是 batch.num.messages
     'linger.ms': 50,
     'error_cb': _error_cb,
-    'message.timeout.ms': 300000, 
+    'message.timeout.ms': 1800000,
+    'queue.buffering.max.messages': 600000
 }
 producer = Producer(config)
 
@@ -89,7 +92,7 @@ def current_mode():
         return "deep_night", DEEP_NIGHT_INTERVAL
     if hour >= 22 or hour < 6:
         return "night", NIGHT_INTERVAL
-    return "day", INTERVAL
+    return "day", CYCLE_INTERVAL
 
 def get_token():
     """只在快過期時才重新換 token，保留 60 秒緩衝避開邊界。"""
@@ -178,9 +181,10 @@ def main():
     signal.signal(signal.SIGINT, _stop)
 
     log(f"kafka bootstrap = {KAFKA_BOOTSTRAP}")
-    log(f"start collecting: {CITIES}, day={INTERVAL}s "
+    log(f"start collecting: {CITIES}, day={CYCLE_INTERVAL}s "
         f"night={NIGHT_INTERVAL}s deep_night={DEEP_NIGHT_INTERVAL}s")
-
+    log(f"raw positions: {'ON -> ' + str(RAW_DIR) if SAVE_RAW else 'OFF'}")
+    
     i = 0
     last_disk_check = 0.0
 
@@ -190,18 +194,26 @@ def main():
             city = CITIES[i % len(CITIES)]
             cycle_start = time.time()
     
-            if time.time() - last_disk_check > DISK_CHECK_EVERY_S:
+            if SAVE_RAW and (time.time() - last_disk_check > DISK_CHECK_EVERY_S):
                 check_disk()
                 last_disk_check = time.time()
     
             try:
                 data, fetch_time = fetch(city)
-                path, n = save(city, data)
+                if SAVE_RAW:
+                    path, n = save(city, data)
                 send_producer(city, data, fetch_time)
-                log(f"[{mode}/{interval}s] {city}: {n} records -> {path.relative_to(RAW_DIR.parent)} "
-                    f"| kafka ok={_delivered} fail={_failed}")
+
+                if SAVE_RAW:
+                    log(f"[{mode}/{interval}s] {city}: {n} records -> {path.relative_to(RAW_DIR.parent)} "
+                        f"| kafka ok={_delivered} fail={_failed}")
+                else:
+                    log(f"[{mode}/{interval}s] {city}: {len(data)} records -> kafka ok={_delivered} fail={_failed}")
+
             except requests.HTTPError as e:
                 log(f"{city}: HTTP {e.response.status_code} {e.response.text[:200]}")
+            except requests.RequestException as e:
+                log(f"{city}: NETWORK {type(e).__name__}: {e}")
             except OSError as e:
                 # 寫檔失敗（磁碟滿、權限）—— 不會自己好，要吵
                 log(f"{city}: DISK/IO ERROR {type(e).__name__}: {e}")
