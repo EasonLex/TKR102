@@ -32,7 +32,8 @@ COPY src ./src
 RUN pip install --no-cache-dir -e .
 
 # 執行期才會用到的目錄，先建好並交給非 root
-RUN mkdir -p /app/output/logs /app/raw \
+RUN mkdir -p /app/output/logs /app/output/parquet /app/output/reports /app/raw \
+ && chmod -R a+rwX /app/output /app/raw \
  && useradd -m -u 1000 app \
  && chown -R app:app /app
 USER app
