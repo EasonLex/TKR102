@@ -13,7 +13,7 @@ raw/
 raw/
 Collection/raw/
 *.log
-.env
+.env*
 *.ipynb
 reports/
 Chart/*.png

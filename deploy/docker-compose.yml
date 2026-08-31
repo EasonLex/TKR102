@@ -67,6 +67,61 @@ services:
     networks:
       - kafka
 
+  mysql:
+    image: mysql:8.4
+    container_name: mysql
+    restart: unless-stopped
+ 
+    # 只放 MySQL 需要的憑證。
+    # 不共用 ../.env 是刻意的——那份裡有 TDX 的金鑰，
+    # 沒有理由把它們送進資料庫容器的環境變數裡。
+    env_file:
+      - ../.env.mysql
+ 
+    command:
+      # 資料只有約 20 MB，256M 的 buffer pool 已經是「整個資料集常駐記憶體」
+      - --innodb-buffer-pool-size=256M
+      # 預設開著會吃掉 300–400 MB，比這個資料庫的資料大二十倍
+      - --performance-schema=OFF
+      # 沒有複寫、沒有 PITR 需求，關掉省磁碟與寫入
+      - --skip-log-bin
+      - --innodb-redo-log-capacity=64M
+      - --max-connections=32
+      # 時區寫死 UTC，不要沿用容器的環境設定。
+      # 這台機器上已經因為「時區靠環境決定」踩過三次（cron、容器、date）
+      - --default-time-zone=+00:00
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+ 
+    volumes:
+      - mysql-data:/var/lib/mysql
+ 
+    # 綁定介面，不要 0.0.0.0。
+    # 匯出腳本若跑在同一台的容器裡，其實連這段都不需要——
+    # 走 docker network 用服務名 mysql:3306 即可。
+    # 這兩條是為了「從 MacBook 連進來查資料」。
+    ports:
+      - "127.0.0.1:3306:3306"
+      - "100.119.53.70:3306:3306"
+ 
+    # 上限是隔離機制，不是調校參數。
+    # 設太緊的話 MySQL 會在正常操作時被 OOM killer 挑中，
+    # 而那台上最該保護的是 Kafka。
+    mem_limit: 768m
+ 
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1",
+             "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+ 
+    # MySQL 不需要 Kafka。放同一個網路只是為了讓之後
+    # 跑在這台上的匯出／服務容器能用服務名連到它。
+    networks:
+      - kafka
+
 networks:
   # Kafka 那份 compose 建立的網路。名稱 = 該 compose 的專案名 + _default，
   # 專案名預設是目錄名，所以 ~/kafka/ 底下起的就是 kafka_default。
@@ -74,3 +129,6 @@ networks:
   kafka:
     external: true
     name: kafka_default
+
+volumes:
+  mysql-data:

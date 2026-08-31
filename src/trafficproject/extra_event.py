@@ -322,6 +322,16 @@ def extract_day(city, date, all_stops=None):
 
     src = (f"gs://{GCS_BUCKET}/silver/positions/"
            f"city={city}/dt={date}/positions.parquet")
+    # src_path = f"{GCS_BUCKET}/silver/positions/city={city}/dt={date}/positions.parquet"
+
+    # with fs.open(src_path, "rb") as f:
+    #     n_read = pq.ParquetFile(f).metadata.num_rows
+
+    # df = pd.read_parquet(f"gs://{src_path}", columns=NEEDED_COLS,
+    #                  filters=[("duty_status", "==", 1)])
+
+    # log(f"{city} {date}: 讀入 {n_read:,} 筆 ({time.time()-t0:.1f}s)")
+
     df = pd.read_parquet(src, columns=NEEDED_COLS)       # ← 只讀 8 欄
     n_read = len(df)
     log(f"{city} {date}: 讀入 {n_read:,} 筆 ({time.time()-t0:.1f}s)")
