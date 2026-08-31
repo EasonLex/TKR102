@@ -12,4 +12,3 @@ trap fail ERR
 
 # 不帶參數 = 昨天、兩個城市；compact.py 內部有 sys.exit(1)
 .venv/bin/python -m trafficproject.compact
-EOF
