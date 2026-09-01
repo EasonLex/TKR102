@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS baseline_segment (
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS route_stop (
   city           VARCHAR(16)  NOT NULL,
+  route_name     VARCHAR(64)  NOT NULL
+                 COMMENT '使用者認得的路線號碼，例如 287。sub_route_uid（TPE11881）是 TDX 內部代碼，沒有人會拿它查公車',
   sub_route_uid  VARCHAR(32)  NOT NULL,
   direction      TINYINT UNSIGNED NOT NULL,
   seq            SMALLINT UNSIGNED NOT NULL,
@@ -78,8 +80,18 @@ CREATE TABLE IF NOT EXISTS route_stop (
 
   PRIMARY KEY (sub_route_uid, direction, seq),
   KEY idx_station (station_id),
-  KEY idx_city_route (city, sub_route_uid)
+  KEY idx_city_route (city, sub_route_uid),
+  KEY idx_route_name (route_name)
 ) ENGINE=InnoDB
   DEFAULT CHARSET=utf8mb4
   ROW_FORMAT=DYNAMIC
   COMMENT='現行版本的路線站序。一列 = 某子路線某方向的第 n 站';
+
+
+-- ---------------------------------------------------------------------
+-- 驗證（建完跑一次）
+-- ---------------------------------------------------------------------
+SELECT TABLE_NAME, ENGINE, TABLE_COLLATION, TABLE_COMMENT
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = DATABASE()
+ORDER BY TABLE_NAME;

@@ -56,9 +56,14 @@ BASELINE_COLS = [
 ]
 
 ROUTE_COLS = [
-    "city", "sub_route_uid", "direction", "seq",
+    "city", "route_name", "sub_route_uid", "direction", "seq",
     "station_id", "stop_name", "boarding", "version_id", "loaded_at",
 ]
+
+# MongoDB 文件裡放路線名稱的欄位。
+# 只寫在這一個地方——投影、取值、錯誤訊息都用它，
+# 哪天上游改欄位名只要改這一行。
+ROUTE_NAME_FIELD = "route_name"
 
 # sub_route_uid 的前綴 → 城市。未知前綴會讓程式停下來，不會猜。
 CITY_BY_PREFIX = {"TPE": "Taipei", "NWT": "NewTaipei"}
@@ -139,11 +144,12 @@ def fetch_baseline():
 def fetch_routes():
     db = MongoClient(os.environ["MONGO_URI"]).tdx
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    rows, seen_prefix = [], {}
+    rows, seen_prefix, no_name = [], {}, []
 
     for doc in db.route_stops.find(
         {"valid_to": None},
-        {"sub_route_uid": 1, "direction": 1, "version_id": 1, "stops": 1, "_id": 0},
+        {ROUTE_NAME_FIELD: 1, "sub_route_uid": 1, "direction": 1,
+         "version_id": 1, "stops": 1, "_id": 0},
     ):
         sru = doc["sub_route_uid"]
         prefix = sru[:3]
@@ -154,12 +160,28 @@ def fetch_routes():
                 f"未知的 sub_route_uid 前綴 {prefix!r}（例：{sru}）。"
                 f"請把它加進 CITY_BY_PREFIX，不要讓程式猜。")
 
+        # 路線名稱是「使用者唯一認得的東西」（287），沒有它整個查詢介面
+        # 就不能用。缺了不要補空字串矇混過去——那會變成畫面上一條沒有名字
+        # 的路線，看起來像是資料就長這樣。先收集，最後一次講清楚。
+        route_name = doc.get(ROUTE_NAME_FIELD)
+        if not route_name:
+            no_name.append(sru)
+            continue
+
         for s in doc["stops"]:
             rows.append((
-                city, sru, int(doc["direction"]), int(s["seq"]),
+                city, route_name, sru, int(doc["direction"]), int(s["seq"]),
                 str(s["station_id"]), s["name"], s.get("boarding"),
                 doc["version_id"], now,
             ))
+
+    if no_name:
+        sample = db.route_stops.find_one({"valid_to": None}, {"stops": 0, "_id": 0})
+        raise SystemExit(
+            f"{len(no_name)} 份文件沒有 {ROUTE_NAME_FIELD}（例：{no_name[:5]}）。\n"
+            f"文件的頂層欄位是：{sorted(sample or {})}\n"
+            f"若上游改了欄位名，改 ROUTE_NAME_FIELD；"
+            f"若是真的缺資料，先補 load_static 再匯出。")
 
     log(f"  MongoDB 讀出 {len(rows):,} 列 / 子路線前綴 {seen_prefix}")
     return rows
