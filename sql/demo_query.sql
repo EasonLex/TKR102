@@ -1,11 +1,11 @@
 -- 路線 TPE11881 方向 0，第 4 站到第 12 站，平日早尖峰
 SELECT
   a.seq,
-  a.stop_name  AS 起站,
-  b.stop_name  AS 迄站,
-  s.p50_sec    AS 中位秒,
-  s.p90_sec    AS p90秒,
-  s.unreliability AS 不可靠指數,
+  a.stop_name  AS `起站`,
+  b.stop_name  AS `迄站`,
+  s.p50_sec    AS `中位秒`,
+  s.p90_sec    AS `p90秒`,
+  s.unreliability AS `不可靠指數`,
   s.n, s.level, s.p90_reliable
 FROM route_stop a
 JOIN route_stop b
