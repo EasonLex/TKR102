@@ -122,6 +122,51 @@ services:
     networks:
       - kafka
 
+  api:
+    build: ../api
+    container_name: bus-api
+    restart: unless-stopped
+
+    # 又是一份獨立的憑證檔。
+    # 這支服務只需要 SELECT，就給它一個只有 SELECT 的帳號——
+    # 它是這台機器上唯一會被瀏覽器連到的東西，
+    # 萬一被人從外面打進來，能做的事要少到不用擔心。
+    env_file:
+      - ../api/.env.api
+
+    # MySQL 已經有 healthcheck，用 condition 等它真的可以連，
+    # 不是只等容器「啟動了」。少了 condition 的 depends_on 只保證順序，
+    # API 還是會在 MySQL 初始化到一半時嘗試連線然後死掉。
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+    # 跟 MySQL 一樣的原則：綁介面，不要 0.0.0.0。
+    # 127.0.0.1 給本機、Tailscale IP 給 MacBook 瀏覽器。
+    # 要開給外面看的時候再另外處理（見下方註記）。
+    ports:
+      - "127.0.0.1:8000:8000"
+      - "100.119.53.70:8000:8000"
+
+    mem_limit: 256m
+
+    healthcheck:
+      # 這個映像檔沒有 curl。用 python 就好，不要為了 healthcheck 多裝一個套件。
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+    # 跟 mysql 同一個網路，所以 .env.api 裡的 MYSQL_HOST 是服務名 mysql。
+    #
+    # ★ 這裡不要填 Tailscale IP。★
+    #   同一個連線字串在網路的不同位置有不同的正確答案，這個專題已經踩過兩次
+    #   （KAFKA_BOOTSTRAP、MONGO_URI）。容器要連容器就走 docker network，
+    #   繞出去再繞回來只是多一個會壞掉的東西。
+    networks:
+      - kafka
 networks:
   # Kafka 那份 compose 建立的網路。名稱 = 該 compose 的專案名 + _default，
   # 專案名預設是目錄名，所以 ~/kafka/ 底下起的就是 kafka_default。
