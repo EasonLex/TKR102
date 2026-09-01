@@ -123,7 +123,7 @@ services:
       - kafka
 
   api:
-    build: ../api
+    build: ../../api
     container_name: bus-api
     restart: unless-stopped
 
