@@ -132,7 +132,7 @@ services:
     # 它是這台機器上唯一會被瀏覽器連到的東西，
     # 萬一被人從外面打進來，能做的事要少到不用擔心。
     env_file:
-      - ../api/.env.api
+      - ../../api/.env.api
 
     # MySQL 已經有 healthcheck，用 condition 等它真的可以連，
     # 不是只等容器「啟動了」。少了 condition 的 depends_on 只保證順序，
