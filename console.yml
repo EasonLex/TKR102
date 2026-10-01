@@ -1,0 +1,4 @@
+kafka:
+  brokers: ["kafka:9092"]      # 容器網路內，不是 Tailscale IP
+server:
+  listenPort: 8080

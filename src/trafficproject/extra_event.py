@@ -116,7 +116,7 @@ def load_all_stops():
     """一次把所有現行版本的站序讀進記憶體，避免逐條查 MongoDB。"""
     db = MongoClient(os.environ["MONGO_URI"]).tdx
     out = {}
-    for doc in db.route_stops.find(
+    for doc in db.x.find(
         {"valid_to": None},
         {"sub_route_uid": 1, "direction": 1, "version_id": 1, "stops": 1, "_id": 0},
     ):

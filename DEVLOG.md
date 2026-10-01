@@ -3190,6 +3190,340 @@ SELECT stop_name, CHAR_LENGTH(stop_name), LENGTH(stop_name) FROM route_stop LIMI
 
 ---
 
+## 四之二十八、查詢 API：使用者的認知不等於資料的模型（2026-09-01 ~ 09-02）
+
+基準表落地之後，「TPE11881 這條線第 4 站到第 12 站，平日早尖峰要多久」
+這個問題已經有答案了，但答案只存在於一句手打的 SQL 裡。
+這一節是把它變成「選路線 → 選起站 → 選迄站 → 出表格」。
+
+### `seq + 1` 是錯的，`LEAD()` 才對
+
+第一版的路段展開寫成 `b.seq = a.seq + 1`。跑起來有結果，
+數字看起來也合理——但少了一些路段。
+
+`seq` 有洞。站序表是從 MongoDB 的靜態資料匯出的，中間停用的站牌
+會留下編號的缺口。`seq + 1` 遇到缺口就接不起來，那一段直接消失，
+而**消失的路段不會報錯，只會讓總時間變短**。
+
+```sql
+LEAD(station_id) OVER (PARTITION BY sub_route_uid, direction ORDER BY seq)
+```
+
+改成 `LEAD()` 之後「下一站」的定義從「編號加一」變成「排序上的下一個」，
+跟 `seq` 是否連續無關。
+
+同樣的理由，JOIN 基準表用 `LEFT JOIN` 而不是 `JOIN`：
+某個路段在基準表裡沒有格子（樣本太少被濾掉）時，
+`JOIN` 會把那一段從結果裡拿掉，使用者看到的是一個**偏短的總時間**；
+`LEFT JOIN` 會讓它變成一列 NULL，使用者看得到「這段沒有資料」。
+
+**兩個都是同一件事：缺漏要看得見，不要靜靜地變成一個比較好看的數字。**
+
+### 287 找不到
+
+網頁做好之後第一次實際用，要查 287 —— 查不到。
+
+原因是資料模型裡根本沒有「287」這個東西。有的是 `sub_route_uid`，
+像 `TPE11881`。那是 TDX 的內部識別碼，一條路線的每個子路線各一個。
+系統內部一路用它是對的（它唯一、穩定、是所有表的 join key），
+但**它不是任何一個搭公車的人腦子裡的東西**。
+
+```
+資料模型： sub_route_uid  TPE11881
+使用者：   route_name     287
+```
+
+決定是：`route_name` 從 MongoDB 一路帶到 MySQL，給使用者選、給使用者看；
+內部的 join 全部維持走 `sub_route_uid`，一個字都不動。
+新增 `VARCHAR(64) NOT NULL` 加索引，匯出時若某份文件缺這個欄位就
+**中止並印出那份文件**——不要填空字串，那會變成一條永遠搜不到的路線。
+
+這件事的一般形式：**識別碼的唯一性和它的可用性是兩回事**，
+而系統做久了很容易只剩前者。發現它的方式也很典型——不是測試，
+是自己當一次使用者。
+
+### MySQL 與 MariaDB 的同一句 SQL，排序不同
+
+路線排序要「數字的排前面且照數字大小，其餘照字典序」：
+
+```sql
+ORDER BY
+  route_name REGEXP '^[0-9]' = 0,
+  CAST(REGEXP_SUBSTR(route_name, '^[0-9]+') AS UNSIGNED),
+  route_name, sub_route_uid, direction
+```
+
+本機測試用的是 MariaDB，線上是 MySQL 8。同一句話行為不一樣：
+
+```
+沒有匹配時 REGEXP_SUBSTR 回傳   MySQL 8: NULL      MariaDB: ''
+CAST('' AS UNSIGNED)                              = 0
+```
+
+於是「紅 5」這類非數字路線在 MariaDB 上排序鍵是 0（跟數字混在一起），
+在 MySQL 上是 NULL。第一個排序鍵已經把兩群分開了，所以最後的結果
+碰巧一樣——但那是靠另一個條件救回來的，不是這句話本身正確。
+
+**測試環境和線上環境的資料庫要同一種。** 這次沒出事是運氣。
+
+### 一個語法錯誤，因為真的去執行了 DDL
+
+`schema.sql` 的欄位註解原本寫成兩個相鄰的字串字面值：
+
+```sql
+COMMENT '路線代號，例如 287。'
+        '使用者看得到的名字，內部 join 仍走 sub_route_uid。'
+```
+
+Python 會把相鄰字串串起來，**SQL 不會**。這是語法錯誤。
+
+會發現只因為這次沒有只「檢查」schema，而是真的把 DDL 送進資料庫跑。
+純看的話那兩行長得完全正常。
+
+### 護欄
+
+- 唯讀帳號給 API 用，只有 `SELECT`，只有那兩張表。
+- MySQL 綁 `127.0.0.1` 與 Tailscale IP，**不綁 `0.0.0.0`**。
+- `.env.api` 與 `.env` 分開：TDX 的金鑰沒有理由出現在查詢服務裡。
+- 一支 **schema contract test**：拿一份最小的建表 SQL 起一個空庫，
+  跑真正的查詢語句。它抓的是「程式改了欄位名但 schema 沒改」這類
+  在單元測試裡看不出來的錯——單元測試餵的是自己造的假資料，
+  那份假資料會跟著程式一起改，於是永遠一致。
+
+API 拆成獨立 repo，15 個測試，CI 在 push 時跑。
+
+---
+
+## 四之二十九、Airflow：把批次接上排程，以及五個我自己製造的失敗（2026-09-02 ~ 09-03）
+
+四支批次工作（壓實、事件抽取、基準重算、服務層匯出）從 cron 搬進
+Airflow 3.3.1，Docker + LocalExecutor，跑在新開的 8 GB VM 上。
+
+這一節的技術結論不多，值得留下來的是失敗的形狀。
+
+### DAG 的切法
+
+```
+bus_ingest   壓實        排程 01:30      → Asset bus://silver/positions
+bus_events   事件抽取    排程 03:00      → Asset bus://silver/events_v2
+bus_serving  基準＋匯出  由 Asset 觸發
+```
+
+`bus_serving` 不排固定時間，因為「抽取跑完之後半小時」是猜的。
+猜短了就會對著寫到一半的資料算基準，**而那不會報錯**，
+只會算出一份少一天的基準。Asset 讓「什麼時候可以開始」
+由上游宣告，不由時鐘決定。
+
+`heavy_memory` pool 槽位 1：單日抽取峰值 2.9 GB，機器 8 GB。
+沒有這個閘門，回填時 Airflow 會盡量平行，兩個疊起來就把整台打掉——
+**包括 scheduler 自己**（LocalExecutor 的任務跑在 scheduler 容器裡，
+所以那個容器刻意沒有 `mem_limit`：設了等於替 OOM killer 選好目標）。
+
+### 失敗一：部署到了錯的機器
+
+第一次 `docker compose up` 是在 kafka-1 上跑的。那台 4 GB，
+已經住著 Kafka、collector、archiver、MySQL。Airflow 起來之後機器直接沒了。
+
+**README 裡有一段寫著「不要裝在 kafka-1」。** 那段話沒有阻止任何事。
+
+復原沒有資料損失，因為 archiver 是 systemd 服務、`NRestarts=0`、
+Kafka 保留 14 天：`stop` → `set-machine-type e2-standard-2` → `start`。
+但那是運氣的一部分——如果 archiver 是跑在 Docker 裡的，它會跟著一起沒。
+
+> **假設寫在文件裡就不是保護，只是說明。**
+> 這一節後面每一個失敗都是這句話的變形。
+
+### 失敗二：版本用猜的，然後親手造成自己警告的問題
+
+`requirements.txt` 第一版把 `pandas` 釘在 2.3.3、`pyarrow` 釘在 18.1.0，
+理由寫得很好聽：「換排程器不該順便換 pandas 版本」。
+
+**那兩個數字是猜的。** 主專案實際跑 3.0.5 / 25.0.0。
+於是「上 Airflow」變成了「降 pandas 兩個大版本」，壓實炸在：
+
+```
+ArrowTypeError: Unable to merge: Field city has incompatible types:
+string vs dictionary<values=string, indices=int32>
+```
+
+（Hive 分區推斷出來的 `city` 是 dictionary，檔案裡同名欄位是 string，
+兩個版本對這件事的處理不同。）
+
+我建了一個機制去防止版本改變，而那個機制**造成了**版本改變。
+
+修法不是「不要釘版本」，是把假設變成會失敗的東西：現在
+`requirements.txt` 一個版本都不釘（交給官方 constraints），
+而 `bus_ingest` 的第一個任務 `preflight` 會去讀主專案自己的
+`uv.lock` / `pyproject.toml`，跟容器裡的實際版本比對，不一致就讓 DAG 失敗。
+
+版本從主專案自己的宣告讀，不在 Airflow repo 再寫一份——兩份清單遲早長歪。
+
+### 失敗三：驗證走的路徑和交付走的路徑不一樣
+
+修版本問題時要把 `pymysql` 釘成 1.1.3，但官方 constraints 釘 1.2.0。
+我用了 `uv pip install --override`，在容器裡手動跑 `uv pip check` 通過，
+於是寫進 Dockerfile。build 直接失敗。
+
+實測結論：**`--override` 不會覆蓋 `--constraint`**。
+兩者同時給的時候，constraint 贏。
+
+但真正的問題不是這個知識點。是我驗證的時候分兩步跑
+（先裝再檢查），Dockerfile 裡是一條帶 constraint 的指令——
+**同樣的套件、不同的裝法**。驗證通過只證明了那個裝法可行。
+
+最後的做法是從 `requirements.txt` 自己推出要濾掉哪幾行：
+
+```dockerfile
+RUN PINNED="$(sed -nE 's/^([A-Za-z0-9._-]+)==.*/\1/p' /tmp/requirements.txt | paste -sd'|' -)" \
+    && grep -vEi "^(${PINNED})==" /home/airflow/constraints.txt > /tmp/constraints.txt \
+    && uv pip install --no-cache -r /tmp/requirements.txt --constraint /tmp/constraints.txt \
+    && uv pip check && python -c "import airflow, pandas, pyarrow"
+```
+
+要濾哪幾行不用另外維護清單——它是從「你釘了什麼」推出來的。
+
+### 失敗四：一行環境變數，症狀完全不指向它
+
+所有任務都失敗，UI 上的訊息是：
+
+```
+Executor LocalExecutor(parallelism=4) reported that the task instance
+finished with state failed, but the task instance's state attribute is queued
+```
+
+任務的 log 檔**不存在**。因為它死在「開始執行之前」。
+
+Airflow 3 的任務不再直接讀寫 metadata DB，而是透過 API server 回報狀態。
+我從官方 compose 改寫時把 `AIRFLOW__CORE__EXECUTION_API_SERVER_URL` 漏掉了，
+預設值 `http://localhost:8080/execution/` 在 scheduler 容器裡指向空氣。
+真正的 `httpx.ConnectError` 埋在 scheduler 的 log 裡，不在任務的 log 裡——
+因為任務的 log 檔還沒被建立。
+
+找到它的方法是把官方 compose 的環境變數名稱和自己的做差集：
+
+```bash
+comm -23 <(官方的 AIRFLOW__* 名稱 | sort) <(自己的 | sort)
+```
+
+**「少了什麼」比「多了什麼」難看出來**，而 diff 是把它變成看得見的方式。
+
+順帶兩個同期的小坑：
+- **暫停中的 DAG，手動 Trigger 也不會排任務。** 我當時的指示是
+  「保持暫停，手動觸發測一次」——那是錯的，run 會一直停在 `queued`。
+- 主機的 8080 已經被佔用，錯誤發生在容器啟動的最後一步，
+  前面每個服務都起來了，很容易誤判成 Airflow 自己壞掉。
+
+### 失敗五：時區的 off-by-one，以及它的第二次
+
+壓實要壓「剛結束的那個台北日」。我寫成 `macros.ds_add(ds, -1)`，
+理由聽起來完全正確：「01:30 跑的時候今天才過 90 分鐘，要壓前一天」。
+
+早了一天。
+
+```
+排程     30 1 * * *  (Asia/Taipei)
+觸發     台北 2026-09-03 01:30
+logical_date       2026-09-02T17:30:00+00:00
+ds = logical_date 的 UTC 日期 = 2026-09-02   ← 已經是「台北的昨天」
+ds_add(ds, -1)                = 2026-09-01   ← 早一天
+```
+
+那個「前一天」在 UTC 的日期換算裡已經被吃掉了。
+發現它是靠使用者貼上來的 `run_id`——`scheduled__2026-09-02T17:30:00+00:00`，
+那串 UTC 時間戳自己說明了一切。
+
+改成 `logical_date.in_timezone('Asia/Taipei') - timedelta(days=1)`：
+這句話跟意圖是一對一的，cron 的小時改了也不會悄悄變成錯的。
+
+**然後同一個錯誤有第二幕。** 修好 `bus_ingest` 之後，`bus_events`
+的 `{{ ds }}` 留著沒改，理由是「它現在是對的」——03:00 的排程下
+`ds` 剛好也等於答案：
+
+```
+cron 0 3 * * *   台北 09-03 03:00 → ds=09-02，台北昨日=09-02  ✓
+cron 0 9 * * *   台北 09-03 09:00 → ds=09-03，台北昨日=09-02  ✗
+```
+
+「它現在是對的所以先放著」正是第一次出事的思路。
+
+而更該檢討的是**測試**：那支測試叫 `test_ingest_uses_taipei_day_not_ds`，
+只讀 `bus_ingest.py`。所以 `bus_events` 的 `ds` 是**在有測試的情況下
+留下來的**。斷言的涵蓋範圍比風險的涵蓋範圍小，等於沒有測試。
+
+### 一個錯誤的架構前提
+
+DAG 的檔頭原本寫著「壓實不是日期的函數，是把 Kafka 倒出來、
+靠 offset 前進，所以不能回填」，並據此把 `catchup` 設成 False。
+
+**我沒有讀過 `compact.py` 就照 Kafka consumer 的模型推斷了。**
+它讀的是 GCS 的 `staging/`，接受日期參數，可以重跑。
+
+錯的前提連帶影響了三個地方：`catchup` 的設定、一支測試的命名
+（`test_ingest_never_backfills`）、README 的一張表。
+「三個 DAG 分開」這個結論本身仍然成立，只是第一條理由要換成真的那個。
+
+**推斷出來的前提要標記成推斷。** 寫成陳述句之後，它會被引用、
+會長出設定、會長出測試，而那些東西不會回頭去驗證它。
+
+### `start_date` 不是「第一天資料」
+
+`bus_events` 的 `start_date` 原本寫 `2026-08-04` 並註解「資料的第一天」。
+註解說的是真的，但那不是這個欄位的意思。
+
+```
+資料的第一天             2026-08-04
+處理 8/4 的那個 run      台北 08-05 03:00 觸發
+所以 start_date 應該是   2026-08-05
+```
+
+寫 8/4 的話，第一個 run 會去找 8/3 的位置點——那天不存在，
+`wait_for_positions` 重試 6 次 × 20 分鐘，**兩小時之後才失敗**，
+整個 30 天回填卡在第一格。這種錯不會在 import 時被抓到，
+所以現在是一支斷言。
+
+### catchup 不會往回補
+
+silver 缺 8/31 和 9/1。`catchup=True` 沒有補——
+**排程器只從最後一個已存在的 run 往後建**，不會回頭。
+
+```bash
+airflow backfill create --dag-id bus_ingest \
+  --from-date 2026-09-01 --to-date 2026-09-03 --max-active-runs 1
+```
+
+`--from-date` / `--to-date` 兩端都含，用的是 `default_timezone`；
+`--reprocess-behavior` 預設 `none`，已存在的 logical date 會被跳過。
+
+（同期學到但不值得展開的：`airflow backfill` 底下只有 `create`，
+沒有 `list`；`dags list-runs` 在 3.x 是位置參數不是 `-d`。
+這兩個我都是憑印象講錯之後才去查的。）
+
+### 量到的數字
+
+```
+壓實     7.6 分／天   （兩次完全一致）
+事件抽取 16.9 分／天  （壓實的 2.2 倍）
+30 天回填 ≈ 8.5 小時，序列執行
+```
+
+壓實與抽取讀的是同一份 silver 日檔，所以 7.6 分是抽取耗時的**下界**
+而不是估計值。這種「用已知的便宜工作去框未知的貴工作」的估法，
+比直接猜有用得多。
+
+回填期間 `bus_serving` 必須暫停：30 次 EVENTS 更新會拖著
+BigQuery 全表重算跑 30 次。GCE 是按開機時間計費，CPU 跑滿不加錢；
+**唯一會安靜長出費用的是 BigQuery 的掃描量**。
+
+### 現況
+
+```
+silver/positions    兩市各 30 天（08-04 ~ 09-02），無缺口
+silver/events_v2    回填中
+DAG 測試            20 passed
+```
+
+---
+
 ## 五、部署：從腳本到服務
 
 ### 動機
@@ -3612,12 +3946,86 @@ MacBook (開發)  →  git  →  Mac mini (常駐執行)
      靜態站序算出「每方向 33.1 站」，GPS 事件算出「每趟 33.4 個事件」。
      沒有共用中間結果，所以對得上就是真的對。
 
+106. **假設寫在文件裡就不是保護，只是說明。**
+     README 寫著「不要裝在 kafka-1」，然後我裝在 kafka-1 上，機器沒了。
+     要擋住的假設得變成會失敗的東西——一個測試、一個 preflight 任務、
+     一個啟動時的斷言。
+
+107. **驗證要走跟交付一樣的路徑。**
+     手動分兩步裝完再 `uv pip check` 通過，Dockerfile 裡是一條帶
+     constraint 的指令，build 直接失敗。同樣的套件、不同的裝法，
+     驗證通過只證明了那個裝法可行。
+
+108. **建立來防止某件事的機制，要先確認自己沒有正在做那件事。**
+     釘 pandas 版本是為了「換排程器不該順便換 pandas」，
+     而那兩個版本號是猜的，於是那個機制親手把主專案降了兩個大版本。
+
+109. **推斷出來的前提要標記成推斷。**
+     「壓實靠 offset 前進所以不能回填」是照 Kafka consumer 的模型推的，
+     沒讀過程式。寫成陳述句之後它長出了設定、測試和文件，
+     而那些東西不會回頭驗證它。
+
+110. **斷言的涵蓋範圍要跟風險的涵蓋範圍一樣大。**
+     `test_ingest_uses_taipei_day_not_ds` 只讀 `bus_ingest.py`，
+     所以 `bus_events` 的同一個 bug 是**在有測試的情況下**留下來的。
+
+111. **「它現在是對的」不是留著它的理由。**
+     `ds` 在凌晨的排程下剛好等於答案，把 cron 挪到早上就差一天。
+     靠巧合成立的正確，和錯誤之間只隔一次無關的修改。
+
+112. **識別碼的唯一性和它的可用性是兩回事。**
+     `sub_route_uid` 唯一、穩定、是所有 join key，但沒有人記得住 287
+     叫 `TPE11881`。系統做久了很容易只剩前者，
+     而發現它的方式通常不是測試，是自己當一次使用者。
+
+113. **`seq + 1` 假設編號連續，`LEAD()` 不假設。**
+     停用的站牌留下編號缺口，`seq + 1` 遇到缺口就把那段丟掉——
+     而消失的路段不會報錯，只會讓總時間變短。
+
+114. **缺漏要看得見。**
+     `JOIN` 讓沒有基準的路段安靜消失，`LEFT JOIN` 讓它變成一列 NULL。
+     同樣的道理：來源 0 列要中止，不要用空表覆蓋線上資料。
+
+115. **測試環境和線上環境的資料庫要同一種。**
+     `REGEXP_SUBSTR` 沒匹配時 MySQL 回 NULL、MariaDB 回 `''`，
+     而 `CAST('' AS UNSIGNED)` 是 0，同一句 ORDER BY 排出不同結果。
+
+116. **只「看」DDL 看不出語法錯誤，要真的送進資料庫跑。**
+     相鄰的字串字面值在 Python 會串接，在 SQL 是語法錯誤，
+     而它在編輯器裡長得完全正常。
+
+117. **少了什麼比多了什麼難看出來。**
+     漏掉一行 `EXECUTION_API_SERVER_URL`，症狀是「executor 說失敗了
+     但狀態是 queued」而且任務的 log 檔不存在。
+     把官方設定和自己的做差集，才讓「缺席」變成看得見的東西。
+
+118. **失敗在「開始執行之前」的話，不會有它自己的 log。**
+     找不到任務 log 時要往上一層看（scheduler、entrypoint、容器），
+     而不是反覆找那個不存在的檔案。
+
+119. **`start_date` 是第一個 run 的觸發時刻，不是第一天資料。**
+     兩者差一個排程週期，而錯了不會報錯——
+     只會讓第一個 run 去等一天不存在的資料，重試兩小時才失敗。
+
+120. **catchup 只往前，不往回。**
+     排程器從最後一個已存在的 run 往後建。真正的回填要用
+     `backfill create`，而它的日期是「run 的日期」不是「資料的日期」。
+
+121. **用已知的便宜工作去框未知的貴工作。**
+     壓實 7.6 分／天，抽取讀同一份日檔，所以 7.6 分是抽取的下界。
+     比直接猜一個數字有用得多。
+
+122. **按開機時間計費的東西，跑滿 CPU 不加錢。**
+     8.5 小時的回填在 GCE 上是 $0；會安靜長出費用的是按掃描量計費的
+     BigQuery，以及開了版本控制的物件儲存。
+
 ---
 
 ## 七、後續規劃
 
-> 更新於 2026-08-29。事件判定 v2、22 天回填、collector 上雲皆已完成，
-> 基準表的粒度已由實測定案，SQL 已寫但尚未執行。
+> 更新於 2026-09-03。查詢 API 上線、Airflow 接管四支批次、
+> silver 補齊 30 天無缺口。「歷史基準」這半題連同它的服務介面完成，
+> 剩下的是「即時異常偵測」那半題。
 
 ### 已完成
 
@@ -3626,50 +4034,66 @@ TDX → collector（GCE, Docker, 常駐）
         └→ Kafka（GCE, KRaft, 12 分區, 14 天 retention）
                 ↓ archiver（systemd, 常駐）
            staging/ 小檔
-                ↓ 壓實去重（cron，時區待修）
-           silver/positions/  22 天 × 2 城
-                ↓ 事件抽取 v2（順序約束）
+                ↓ 壓實去重                      ← Airflow bus_ingest   01:30
+           silver/positions/  30 天 × 2 城（08-04 ~ 09-02，無缺口）
+                ↓ 事件抽取 v2（順序約束）        ← Airflow bus_events   03:00
            silver/events_v2/  → BigQuery 外部表
-                ↓ baseline_build.sql
-           bus.baseline_segment  →  MySQL 服務層（GCE, Docker）
+                ↓ baseline_build.sql            ← Airflow bus_serving  Asset 觸發
+           bus.baseline_segment
+                ↓ export_serving（RENAME TABLE 原子交換）
+           MySQL 服務層（GCE, Docker）
+                ↓
+           查詢 API + 網頁（GCE, Docker, 唯讀帳號）
 ```
 
 - 判定規則 v2：順序約束解掉結構性歧義，倒退步 −99.4%，主體分佈不動
 - 08-04 ~ 08-19 回填 + 08-20 切界合併，平日資料 4 天 → 16 天
-- collector 容器化、搬上 GCE，Mac mini 除役（launchd 已 disable + plist 移走）
+- collector 容器化、搬上 GCE，Mac mini 除役
 - 基準粒度定案：站牌對 × 5 時段 × 平日假日，走行覆蓋率 98.1%
+- 基準表 145,050 格，不可靠指數中位 1.51
+- **服務層與查詢介面**：`route_name` 端到端、`LEAD()` 展開路段、
+  多路段以 `Σmean + 1.28·√Σsd²` 合成（直接加 p90 高估 28%）
+- **Airflow 3.3.1 接管四支批次**：三個 DAG、Asset 串接、
+  `heavy_memory` pool 擋住 2.9 GB 的抽取，20 個 DAG 測試
 
 ### 進行中
 
-- [x] `sql/baseline_build.sql` 執行並驗證 —— 完成 2026-08-31
-      39,079,025 步階 → 145,050 格；主鍵唯一；走行覆蓋 99.4% / 96.5%
-      **不可靠指數中位 1.51**（中位路段 66 秒，最糟一成 100 秒）
-- [x] 匯出到 MySQL —— 完成 2026-09-01
-      `baseline_segment` 145,050 列 + `route_stop` 85,001 列，`RENAME TABLE` 原子交換
-      端到端查詢可用：**「歷史基準」這半題完成**
+- [x] 查詢 API 獨立 repo，15 測試，CI —— 完成 2026-09-02
+- [x] Airflow 獨立 repo，20 測試，CI —— 完成 2026-09-03
+- [x] silver 缺口回填（08-31、09-01）—— 完成 2026-09-03
+- [ ] `bus_events` 30 天回填（進行中，約 8.5 小時）
+- [ ] 回填完成後 `bus_serving` unpause，跑一次完整重算與匯出
 
 ### 待做
 
 | 項目 | 難度 | 對應題目的哪一半 |
 |---|---|---|
-| Airflow（Docker on GCP，新機） | 中 | 運維基礎 |
 | Consumer B 串流事件偵測 | **高** | 即時異常偵測的前置 |
 | Consumer C 異常偵測 | 中 | **即時異常偵測** |
 
-**Airflow 的前提是機器**。collector + archiver + Kafka 已經吃掉現有 4 GB
-的一大半，Airflow（1.5–2 GB）加上事件抽取的峰值（2 GB）裝不下。
-決定是**開第二台**而非升級：批次工作沒有一個需要待在 Kafka 那台
-（全部走 GCS / BigQuery API），而**批次掛掉可以重跑，收集掛掉的那一小時回不來**——
-不該用可重跑的工作去冒不可重跑的風險。
-
-**collector 不進 Airflow**。它是常駐輪詢，不是批次任務；
-Airflow 只接管「每天該發生一次、有開始有結束」的工作。
-
 ### 量測與運維的欠債
 
-- [ ] **壓實 cron 的時區**：`30 4 * * *` 在 UTC 的 GCE 上是台北 12:30，應為 `30 20 * * *`
-- [ ] 層間漏斗的自動檢查（現在有現成指標：取樣間隔的 p90/p50，正常 1.0–1.05）
-- [ ] 壓實失敗與 collector 停擺的 ntfy 告警
+**已還**
+
+- [x] 壓實 cron 的時區 —— Airflow 接管，時區在 DAG 裡寫死 `Asia/Taipei`
+- [x] 壓實失敗與 collector 停擺的 ntfy 告警 —— `bus_ingest.report`，
+      而且把兩個訊號分開：silver 落後是「不緊急」（資料還在 staging），
+      staging 不再長才是「永久缺口」
+
+**新增（Airflow 帶來的）**
+
+- [ ] 沒有一支測試會實際跑一次真的部署接線。四個部署期的 bug
+      （`EXECUTION_API_SERVER_URL`、port 佔用、版本、`start_date`）
+      全部是靜態測試看不到的
+- [ ] `bus_serving` 每次 EVENTS 更新都做整份重算，沒有增量
+- [ ] 沒有「DAG 根本沒跑」的告警。失敗會通知，不執行不會
+- [ ] `load_static.py` 還在 cron 上，沒進 Airflow
+- [ ] 主專案在兩台機器上各有一份 clone，會漂移
+- [ ] kafka-1 上的 `bus-airflow.moved` 內含生成的密鑰，未清除
+
+**沿用**
+
+- [ ] 層間漏斗的自動檢查（取樣間隔 p90/p50，正常 1.0–1.05）
 - [ ] archiver 加 `StartLimitBurst`，讓「壞了」變成看得見的 failed 狀態
 - [ ] 終點條件會連續重複觸發，污染播種統計（終點 39,647 vs 趟次 27,146）
 - [ ] `paths.py` 在 import 時建目錄——移到真正需要的模組裡
@@ -3678,7 +4102,11 @@ Airflow 只接管「每天該發生一次、有開始有結束」的工作。
 - [ ] log 輪替（`collector.log` 每日約 1.7 萬行）
 - [ ] archiver 容器化並加入 kafka 網路，消除 `.env` 的位址矛盾
 - [ ] mongod 綁上 VPC 內部介面，同 VPC 的兩台機器不該繞 Tailscale
-- [ ] `sql/demo_query.sql` 與 `scripts/run-compact.sh` 進 git（後者已因不在 git 而消失過一次）
+      （Airflow 那台也一樣，目前三條連線字串都走 Tailscale）
+- [ ] `sql/demo_query.sql`、`scripts/run-compact.sh`、`kafka/docker-compose.yml`
+      進 git（`run-compact.sh` 已因不在 git 而消失過一次；
+      現在 Airflow 直接呼叫 `python -m trafficproject.compact`，
+      它變成只有舊 cron 在用的路徑，進 git 時要標記狀態）
 
 ### 已知的資料特性（供基準計算時參考）
 
@@ -3687,6 +4115,8 @@ Airflow 只接管「每天該發生一次、有開始有結束」的工作。
 - **08-20**：cutover 當天，本地 + Kafka 切界合併，為正常週四的 96%。
 - **08-29**：collector 搬機期間有兩段短缺口（launchd 停擺、`KAFKA_TOPIC` 指錯），
   後者確定遺失約 879 筆。
+- **09-02 ~ 09-03**：Airflow 導入期間壓實停擺兩天，
+  archiver 正常（`NRestarts=0`），資料留在 staging，已回填，無損失。
 
 ### 合規事項
 

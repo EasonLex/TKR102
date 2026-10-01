@@ -12,8 +12,8 @@ services:
     container_name: kafka
     restart: unless-stopped
     ports:
-      - "9092:9092"    # INTERNAL（本機測試用；上雲後可只留 9094）
-      - "9094:9094"    # EXTERNAL（Tailscale）
+      - "127.0.0.1:9094:9094"
+      - "${TAILSCALE_IP}:9094:9094"    # EXTERNAL（Tailscale）
     environment:
       # ---- KRaft：不需要 ZooKeeper ----
       CLUSTER_ID: ${CLUSTER_ID}
@@ -66,19 +66,17 @@ services:
       driver: json-file
       options: { max-size: "50m", max-file: "3" }
 
-  # 選用：網頁介面，看 lag / topic 大小很方便，報告 demo 也用得上
-  kafka-ui:
-    image: kafbat/kafka-ui:latest
-    container_name: kafka-ui
-    restart: unless-stopped
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:v3.5.0
+    container_name: redpanda-console
     depends_on:
-      kafka: { condition: service_healthy }
+      kafka:
+        condition: service_healthy
     ports:
-      - "127.0.0.1:8080:8080"   # 只綁 localhost，靠 SSH port-forward 或 Tailscale 存取
-    environment:
-      KAFKA_CLUSTERS_0_NAME: bus
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
-      DYNAMIC_CONFIG_ENABLED: "true"
-    logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "2" }
+      - "127.0.0.1:8081:8080"
+      - "${TAILSCALE_IP}:8081:8080"
+    volumes:
+      - ./console.yaml:/etc/console/console.yaml:ro
+    command: ["--config.filepath=/etc/console/console.yaml"]
+    mem_limit: 256m
+    restart: unless-stopped
